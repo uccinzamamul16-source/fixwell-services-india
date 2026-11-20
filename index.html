@@ -59,6 +59,7 @@ function load(){try{db={...db,...JSON.parse(localStorage.getItem(KEY)||'{}')}}ca
 function save(){localStorage.setItem(KEY,JSON.stringify(db));render()}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function money(n){return '₹'+Number(n||0).toLocaleString('en-IN')}
+function localDate(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function toast(s){let t=document.getElementById('toast');t.textContent=s;t.style.display='block';setTimeout(()=>t.style.display='none',2300)}
 function showView(id){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===id));let names={dashboard:'Business overview',leads:'Customer leads',quotes:'Quotation approvals',projects:'Project tracker',payments:'Payment verification',reports:'Business reports',settings:'Setup & rules'};document.getElementById('pageTitle').textContent=names[id]||id;window.scrollTo(0,0)}
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)));
@@ -84,7 +85,7 @@ function approve(i){if(confirm('Approve this quotation internally? This does NOT
 function printQuote(i){
  const q=db.quotes[i];if(!q||q.status!=='Approved'){toast('Only owner-approved quotations can be printed');return;}
  const no='FW-'+String(q.id||('DRAFT'+(i+1))).slice(0,8).toUpperCase();
- const date=q.quotationDate||new Date().toISOString().slice(0,10);
+ const date=q.quotationDate||localDate();
  const w=window.open('','_blank','width=900,height=900');if(!w){toast('Allow pop-ups to print the quotation');return;}
  const safe=s=>esc(s||'—');
  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${no} | FIXWELL</title><style>
@@ -94,7 +95,7 @@ function printQuote(i){
 function reject(i){if(confirm('Reject this quotation draft?')){db.quotes[i].status='Rejected';save()}}
 function deleteQuote(i){del('quotes',i)}
 document.getElementById('leadForm').addEventListener('submit',e=>{e.preventDefault();db.leads.push({name:leadName.value,phone:leadPhone.value,location:leadLocation.value,service:leadService.value,source:leadSource.value,status:leadStatus.value,notes:leadNotes.value,date:new Date().toISOString()});save();e.target.reset();toast('Lead saved on this device')});
-document.getElementById('quoteForm').addEventListener('submit',e=>{e.preventDefault();db.quotes.push({customer:quoteCustomer.value,phone:quotePhone.value,address:quoteAddress.value,scope:quoteScope.value,amount:quoteAmount.value,validity:quoteValidity.value,terms:quoteTerms.value,quotationDate:new Date().toISOString().slice(0,10),status:'Pending approval'});save();e.target.reset();toast('Draft submitted for your approval')});
+document.getElementById('quoteForm').addEventListener('submit',e=>{e.preventDefault();db.quotes.push({customer:quoteCustomer.value,phone:quotePhone.value,address:quoteAddress.value,scope:quoteScope.value,amount:quoteAmount.value,validity:quoteValidity.value,terms:quoteTerms.value,quotationDate:localDate(),status:'Pending approval'});save();e.target.reset();toast('Draft submitted for your approval')});
 document.getElementById('projectForm').addEventListener('submit',e=>{e.preventDefault();db.projects.push({name:projectName.value,type:projectType.value,stage:projectStage.value,date:projectDate.value});save();e.target.reset();toast('Project saved')});
 document.getElementById('paymentForm').addEventListener('submit',e=>{e.preventDefault();db.payments.push({customer:paymentCustomer.value,amount:paymentAmount.value,ref:paymentRef.value,status:paymentStatus.value});save();e.target.reset();toast('Payment record saved')});
 function exportData(){let a=document.createElement('a'),u=URL.createObjectURL(new Blob([JSON.stringify(db,null,2)],{type:'application/json'}));a.href=u;a.download='fixwell-backup.json';a.click();URL.revokeObjectURL(u)}
@@ -144,7 +145,7 @@ load();
    try{
     ensureIds();
     await upsertTable('leads',db.leads,x=>({name:x.name,phone:x.phone,location:x.location||null,service:x.service||null,source:x.source||null,status:x.status||'New',notes:x.notes||null}));
-    await upsertTable('quotations',db.quotes,x=>({customer:x.customer,customer_phone:x.phone||null,customer_address:x.address||null,quotation_date:x.quotationDate||new Date().toISOString().slice(0,10),scope:x.scope,amount:Number(x.amount),validity:x.validity||'7 days',terms:x.terms||null,status:x.status||'Pending approval'}));
+    await upsertTable('quotations',db.quotes,x=>({customer:x.customer,customer_phone:x.phone||null,customer_address:x.address||null,quotation_date:x.quotationDate||localDate(),scope:x.scope,amount:Number(x.amount),validity:x.validity||'7 days',terms:x.terms||null,status:x.status||'Pending approval'}));
     await upsertTable('projects',db.projects,x=>({name:x.name,service_type:x.type||null,stage:x.stage||'Planning',target_date:x.date||null}));
     await upsertTable('payment_records',db.payments,x=>({customer:x.customer,amount:Number(x.amount),reference:x.ref||null,status:x.status||'Pending verification'}));
     localStorage.setItem(KEY,JSON.stringify(db));setStatus('Cloud sync active');
