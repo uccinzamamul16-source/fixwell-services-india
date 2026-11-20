@@ -156,7 +156,7 @@ load();
    if(!email||password.length<8){setMsg('Enter email and a password with at least 8 characters.');return;}
    setMsg('Creating owner account…');
    try{
-    const {data,error}=await client.auth.signUp({email,password});
+    const {data,error}=await client.auth.signUp({email,password,options:{emailRedirectTo:'https://fixwell-services-india.onrender.com/'}});
     if(error){setMsg(error.message);return;}
     if(data.session){await activate(data.user);}else{setMsg('Account created. Check your email to confirm, then sign in.');}
    }catch(e){setMsg('Could not create account: '+(e.message||'Network or browser issue'));}
