@@ -73,7 +73,7 @@ document.getElementById('projectTable').innerHTML=table(['Project','Service','St
 document.getElementById('paymentTable').innerHTML=table(['Customer','Amount','Reference','Status'],db.payments.map(x=>'<tr><td>'+esc(x.customer)+'</td><td>'+money(x.amount)+'</td><td>'+esc(x.ref||'—')+'</td><td><span class="pill '+(x.status==='Verified by owner'?'approved':'pending')+'">'+esc(x.status)+'</span></td></tr>'));
 let won=db.leads.filter(x=>x.status==='Won').length;document.getElementById('conversion').textContent=db.leads.length?Math.round(won/db.leads.length*100)+'%':'0%';document.getElementById('pendingValue').textContent=money(db.quotes.filter(x=>x.status==='Pending approval').reduce((a,x)=>a+Number(x.amount),0));document.getElementById('reportText').textContent='Leads: '+db.leads.length+' · Won: '+won+' · Quotations: '+db.quotes.length+' · Projects: '+db.projects.length+' · Payment entries: '+db.payments.length+'. This snapshot reflects only records stored in this browser.';
 }
-function del(k,i){if(confirm('Delete this record?')){db[k].splice(i,1);save()}}
+async function del(k,i){if(!confirm('Delete this record?'))return;const record=db[k][i];if(window.fwDeleteCloud){const ok=await window.fwDeleteCloud(k,record);if(!ok)return;}db[k].splice(i,1);save()}
 function approve(i){if(confirm('Approve this quotation internally? This does NOT send it to the customer.')){db.quotes[i].status='Approved';save();toast('Marked approved internally')}}
 function reject(i){if(confirm('Reject this quotation draft?')){db.quotes[i].status='Rejected';save()}}
 document.getElementById('leadForm').addEventListener('submit',e=>{e.preventDefault();db.leads.push({name:leadName.value,phone:leadPhone.value,location:leadLocation.value,service:leadService.value,source:leadSource.value,status:leadStatus.value,notes:leadNotes.value,date:new Date().toISOString()});save();e.target.reset();toast('Lead saved on this device')});
@@ -94,9 +94,11 @@ load();
   const SUPABASE_URL='https://ggnakqnlnhhhtxuvbnfs.supabase.co';
   const SUPABASE_KEY='sb_publishable_ybZJKedpy6Wqx4gIBVus6A_Ts62vDiM';
   const client=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-  let owner=null, syncing=false;
+  let owner=null, syncing=false, syncRequested=false;
   const auth=document.getElementById('fwAuth');
   const localHasData=()=>Object.values(db).some(a=>Array.isArray(a)&&a.length);
+  const makeId=()=>window.crypto&&crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16)});
+  const ensureIds=()=>{for(const key of ['leads','quotes','projects','payments'])db[key].forEach(x=>{if(!x.id)x.id=makeId()});};
   const setStatus=s=>{const el=document.querySelector('.status');if(el)el.innerHTML='<i></i> '+s;};
   async function fetchCloud(){
    const [l,q,p,pay]=await Promise.all([
@@ -107,31 +109,39 @@ load();
    ]);
    for(const x of [l,q,p,pay])if(x.error)throw x.error;
    return {
-    leads:l.data.map(x=>({name:x.name,phone:x.phone,location:x.location,service:x.service,source:x.source,status:x.status,notes:x.notes,date:x.created_at})),
-    quotes:q.data.map(x=>({customer:x.customer,scope:x.scope,amount:x.amount,validity:x.validity,terms:x.terms,status:x.status})),
-    projects:p.data.map(x=>({name:x.name,type:x.service_type,stage:x.stage,date:x.target_date})),
-    payments:pay.data.map(x=>({customer:x.customer,amount:x.amount,ref:x.reference,status:x.status}))
+    leads:l.data.map(x=>({id:x.id,name:x.name,phone:x.phone,location:x.location,service:x.service,source:x.source,status:x.status,notes:x.notes,date:x.created_at})),
+    quotes:q.data.map(x=>({id:x.id,customer:x.customer,scope:x.scope,amount:x.amount,validity:x.validity,terms:x.terms,status:x.status})),
+    projects:p.data.map(x=>({id:x.id,name:x.name,type:x.service_type,stage:x.stage,date:x.target_date})),
+    payments:pay.data.map(x=>({id:x.id,customer:x.customer,amount:x.amount,ref:x.reference,status:x.status}))
    };
   }
-  async function replaceTable(table,rows,mapper){
-   const del=await client.from(table).delete().neq('id','00000000-0000-0000-0000-000000000000');
-   if(del.error)throw del.error;
-   const payload=rows.map(x=>({...mapper(x),owner_id:owner.id}));
-   if(payload.length){const ins=await client.from(table).insert(payload);if(ins.error)throw ins.error;}
+  async function upsertTable(table,rows,mapper){
+   const payload=rows.map(x=>({id:x.id,...mapper(x),owner_id:owner.id}));
+   if(payload.length){const result=await client.from(table).upsert(payload,{onConflict:'id'});if(result.error)throw result.error;}
   }
   async function syncCloud(){
-   if(!owner||syncing)return;
+   if(!owner)return;
+   if(syncing){syncRequested=true;return;}
    syncing=true;setStatus('Syncing cloud…');
    try{
-    await replaceTable('leads',db.leads,x=>({name:x.name,phone:x.phone,location:x.location||null,service:x.service||null,source:x.source||null,status:x.status||'New',notes:x.notes||null}));
-    await replaceTable('quotations',db.quotes,x=>({customer:x.customer,scope:x.scope,amount:Number(x.amount),validity:x.validity||'7 days',terms:x.terms||null,status:x.status||'Pending approval'}));
-    await replaceTable('projects',db.projects,x=>({name:x.name,service_type:x.type||null,stage:x.stage||'Planning',target_date:x.date||null}));
-    await replaceTable('payment_records',db.payments,x=>({customer:x.customer,amount:Number(x.amount),reference:x.ref||null,status:x.status||'Pending verification'}));
+    ensureIds();
+    await upsertTable('leads',db.leads,x=>({name:x.name,phone:x.phone,location:x.location||null,service:x.service||null,source:x.source||null,status:x.status||'New',notes:x.notes||null}));
+    await upsertTable('quotations',db.quotes,x=>({customer:x.customer,scope:x.scope,amount:Number(x.amount),validity:x.validity||'7 days',terms:x.terms||null,status:x.status||'Pending approval'}));
+    await upsertTable('projects',db.projects,x=>({name:x.name,service_type:x.type||null,stage:x.stage||'Planning',target_date:x.date||null}));
+    await upsertTable('payment_records',db.payments,x=>({customer:x.customer,amount:Number(x.amount),reference:x.ref||null,status:x.status||'Pending verification'}));
     localStorage.setItem(KEY,JSON.stringify(db));setStatus('Cloud sync active');
    }catch(e){console.error(e);setStatus('Cloud sync error');toast('Cloud sync failed: '+(e.message||'Please retry'));}
-   finally{syncing=false;}
+   finally{syncing=false;if(syncRequested){syncRequested=false;syncCloud();}}
   }
-  save=function(){localStorage.setItem(KEY,JSON.stringify(db));render();syncCloud();};
+  window.fwDeleteCloud=async(k,record)=>{
+   if(!owner||!record||!record.id)return true;
+   const tables={leads:'leads',quotes:'quotations',projects:'projects',payments:'payment_records'};
+   const table=tables[k];if(!table)return false;
+   const result=await client.from(table).delete().eq('id',record.id);
+   if(result.error){toast('Cloud delete failed: '+result.error.message);return false;}
+   return true;
+  };
+  save=function(){ensureIds();localStorage.setItem(KEY,JSON.stringify(db));render();syncCloud();};
   async function activate(user){
    owner=user;auth.style.display='none';setStatus('Connecting cloud…');
    try{
