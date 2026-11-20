@@ -30,6 +30,29 @@
 <section class="view" id="reports"><div class="stats"><div class="card"><div class="statlabel">Lead conversion</div><div class="statnum" id="conversion">0%</div></div><div class="card"><div class="statlabel">Quotation value pending</div><div class="statnum gold" id="pendingValue">₹0</div></div></div><div class="panel"><h2>Business snapshot</h2><div id="reportText" class="hint" style="margin-top:12px;line-height:1.8">Add records to see your business snapshot.</div></div></section>
 <section class="view" id="settings"><div class="panel"><h2>Business identity</h2><p class="sub">FIXWELL SERVICES INDIA</p><p class="sub">Tagline: Smart Business. Smarter Solutions.</p><p class="sub">Service coverage: All India</p><p class="sub">Brand palette: Navy #101827 · Slate #26354B · Gold #D6B46A · White #FFFFFF</p></div><div class="panel"><h2>Operating rules</h2><ul class="sub" style="line-height:2"><li>Owner approval is mandatory before a quotation is sent.</li><li>No paid subscriptions, ad spend, vendor payment or customer refund without owner approval.</li><li>Payment status must be checked against actual bank / provider records.</li><li>Customer data should be collected and used only with appropriate consent.</li><li>Never store passwords, OTPs, card details or bank credentials in this dashboard.</li></ul></div><div class="panel"><h2>Current limitations</h2><div class="note">This is version 1: a browser-based dashboard with local storage. Records stay on this device/browser and are not yet synced to a server. AI prospecting, WhatsApp messaging, email, cloud database, login security and automatic reminders are not connected. Do not enter sensitive customer or financial information until secure backend and authentication are added.</div><div class="actions"><button class="btn" onclick="exportData()">Download JSON backup</button><button class="btn" onclick="if(confirm('Clear all local demo records? Download a backup first.')){localStorage.removeItem(KEY);load();toast('Local records cleared')}">Clear local demo data</button></div></div></section>
 </main></div><div class="toast" id="toast"></div>
+<style>
+#fwAuth{position:fixed;inset:0;background:#0c1422;z-index:20;display:grid;place-items:center;padding:18px}
+#fwAuth .authbox{width:min(440px,100%);background:#182438;border:1px solid #304158;border-radius:16px;padding:24px}
+#fwAuth h2{margin:0 0 8px;color:#f7f8fb}#fwAuth p{color:#9ba9bc;font-size:13px;line-height:1.6}
+#fwAuth label{display:block;color:#b7c2d1;font-size:12px;margin:12px 0 6px}
+#fwAuth input{width:100%;padding:12px;background:#101b2c;border:1px solid #304158;border-radius:8px;color:white}
+#fwAuth button{margin:12px 8px 0 0;padding:10px 14px;border-radius:8px;border:1px solid #d6b46a;background:#d6b46a;color:#172033;font-weight:700}
+#fwAuth button.alt{background:#202f45;color:white;border-color:#304158}
+#fwAuth .msg{font-size:12px;color:#d6b46a;min-height:18px}
+</style>
+<div id="fwAuth">
+ <div class="authbox">
+  <div class="eyebrow">FIXWELL SERVICES INDIA</div>
+  <h2>Owner sign in</h2>
+  <p>Sign in to securely access your cloud-synced business records. If this is your first time, create your owner account here.</p>
+  <label>Email address</label><input id="fwEmail" type="email" autocomplete="username" placeholder="you@example.com">
+  <label>Password</label><input id="fwPassword" type="password" autocomplete="current-password" placeholder="At least 8 characters">
+  <div><button id="fwSignIn">Sign in</button><button class="alt" id="fwSignUp">Create account</button></div>
+  <div class="msg" id="fwAuthMsg"></div>
+  <p>Use your own strong password. Never share it, an OTP, or a secret API key in ChatGPT. If email confirmation is enabled, confirm your email before signing in.</p>
+ </div>
+</div>
+
 <script>
 const KEY='fixwell_admin_v1';let db={leads:[],quotes:[],projects:[],payments:[]};
 function load(){try{db={...db,...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch(e){}render()}
@@ -60,3 +83,79 @@ document.getElementById('paymentForm').addEventListener('submit',e=>{e.preventDe
 function exportData(){let a=document.createElement('a'),u=URL.createObjectURL(new Blob([JSON.stringify(db,null,2)],{type:'application/json'}));a.href=u;a.download='fixwell-backup.json';a.click();URL.revokeObjectURL(u)}
 load();
 </script></body></html>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(()=>{
+ const SUPABASE_URL='https://ggnakqnlnhhhtxuvbnfs.supabase.co';
+ const SUPABASE_KEY='sb_publishable_ybZJKedpy6Wqx4gIBVus6A_Ts62vDiM';
+ const client=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+ let owner=null, syncing=false;
+ const auth=document.getElementById('fwAuth'), msg=document.getElementById('fwAuthMsg');
+ const setMsg=s=>msg.textContent=s;
+ const localHasData=()=>Object.values(db).some(a=>Array.isArray(a)&&a.length);
+ const setStatus=s=>{const el=document.querySelector('.status');if(el)el.innerHTML='<i></i> '+s};
+ async function fetchCloud(){
+  const [l,q,p,pay]=await Promise.all([
+   client.from('leads').select('*').order('created_at',{ascending:true}),
+   client.from('quotations').select('*').order('created_at',{ascending:true}),
+   client.from('projects').select('*').order('created_at',{ascending:true}),
+   client.from('payment_records').select('*').order('created_at',{ascending:true})
+  ]);
+  for(const x of [l,q,p,pay])if(x.error)throw x.error;
+  return {
+   leads:l.data.map(x=>({name:x.name,phone:x.phone,location:x.location,service:x.service,source:x.source,status:x.status,notes:x.notes,date:x.created_at})),
+   quotes:q.data.map(x=>({customer:x.customer,scope:x.scope,amount:x.amount,validity:x.validity,terms:x.terms,status:x.status})),
+   projects:p.data.map(x=>({name:x.name,type:x.service_type,stage:x.stage,date:x.target_date})),
+   payments:pay.data.map(x=>({customer:x.customer,amount:x.amount,ref:x.reference,status:x.status}))
+  };
+ }
+ async function replaceTable(table,rows,mapper){
+  const del=await client.from(table).delete().neq('id','00000000-0000-0000-0000-000000000000');
+  if(del.error)throw del.error;
+  const payload=rows.map(x=>({...mapper(x),owner_id:owner.id}));
+  if(payload.length){const ins=await client.from(table).insert(payload);if(ins.error)throw ins.error;}
+ }
+ async function syncCloud(){
+  if(!owner||syncing)return;
+  syncing=true;setStatus('Syncing cloud…');
+  try{
+   await replaceTable('leads',db.leads,x=>({name:x.name,phone:x.phone,location:x.location||null,service:x.service||null,source:x.source||null,status:x.status||'New',notes:x.notes||null}));
+   await replaceTable('quotations',db.quotes,x=>({customer:x.customer,scope:x.scope,amount:Number(x.amount),validity:x.validity||'7 days',terms:x.terms||null,status:x.status||'Pending approval'}));
+   await replaceTable('projects',db.projects,x=>({name:x.name,service_type:x.type||null,stage:x.stage||'Planning',target_date:x.date||null}));
+   await replaceTable('payment_records',db.payments,x=>({customer:x.customer,amount:Number(x.amount),reference:x.ref||null,status:x.status||'Pending verification'}));
+   localStorage.setItem(KEY,JSON.stringify(db));setStatus('Cloud sync active');
+  }catch(e){console.error(e);setStatus('Cloud sync error');toast('Cloud sync failed: '+(e.message||'Please retry'));}
+  finally{syncing=false;}
+ }
+ const oldSave=save;
+ save=function(){localStorage.setItem(KEY,JSON.stringify(db));render();syncCloud();};
+ async function activate(user){
+  owner=user;auth.style.display='none';setStatus('Connecting cloud…');
+  try{
+   const cloud=await fetchCloud();
+   if(!cloud.leads.length&&!cloud.quotes.length&&!cloud.projects.length&&!cloud.payments.length&&localHasData()){
+    if(confirm('Cloud database is empty. Upload the records currently saved in this browser to your private account?'))await syncCloud();
+    else {db=cloud;localStorage.setItem(KEY,JSON.stringify(db));render();}
+   }else{db=cloud;localStorage.setItem(KEY,JSON.stringify(db));render();}
+   setStatus('Cloud sync active');
+   let signout=document.getElementById('fwSignOut');
+   if(!signout){signout=document.createElement('button');signout.id='fwSignOut';signout.className='btn';signout.textContent='Sign out';document.querySelector('.top').appendChild(signout);signout.onclick=async()=>{await client.auth.signOut();location.reload();};}
+  }catch(e){setStatus('Cloud connection error');setMsg(e.message||'Could not load cloud data');auth.style.display='grid';}
+ }
+ document.getElementById('fwSignIn').onclick=async()=>{
+  const email=document.getElementById('fwEmail').value.trim(),password=document.getElementById('fwPassword').value;
+  if(!email||!password){setMsg('Enter email and password.');return;}
+  setMsg('Signing in…');const {data,error}=await client.auth.signInWithPassword({email,password});
+  if(error){setMsg(error.message);return;}await activate(data.user);
+ };
+ document.getElementById('fwSignUp').onclick=async()=>{
+  const email=document.getElementById('fwEmail').value.trim(),password=document.getElementById('fwPassword').value;
+  if(!email||password.length<8){setMsg('Enter email and a password with at least 8 characters.');return;}
+  setMsg('Creating owner account…');const {data,error}=await client.auth.signUp({email,password});
+  if(error){setMsg(error.message);return;}
+  if(data.session){await activate(data.user);}else{setMsg('Account created. Check your email to confirm, then sign in.');}
+ };
+ client.auth.getSession().then(({data})=>{if(data.session)activate(data.session.user);else{auth.style.display='grid';setStatus('Owner sign-in required');}});
+ client.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_OUT'){owner=null;auth.style.display='grid';}});
+})();
+</script>
